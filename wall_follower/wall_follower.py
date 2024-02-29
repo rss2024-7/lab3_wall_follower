@@ -72,8 +72,8 @@ class WallFollower(Node):
         self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
         self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
 
-        max_steer = 0.34 # radians
-        TURN_RADIUS = np.arctan(0.3 / max_steer)
+        MAX_STEER = 0.34 # radians
+        TURN_RADIUS = np.arctan(0.3 / MAX_STEER)
 
         drive_msg = AckermannDriveStamped()
         drive_msg.drive.speed = self.VELOCITY
@@ -87,17 +87,6 @@ class WallFollower(Node):
         ranges = np.array(scan.ranges)
         angle_min = scan.angle_min
         angle_increment = scan.angle_increment
-
-        # # TURNING
-        # angles = np.array([angle_min + angle_increment * i for i in range(len(scan.ranges))])
-        # scan_ranges = np.array(scan.ranges)
-        # quarter_condition = np.where(np.logical_and(self.SIDE * angles >= np.pi / 3 - np.pi / 48, np.abs(angles) <= np.pi / 3 + np.pi / 48))
-        # quarter_angles = angles[quarter_condition]
-        # quarter_ranges = scan_ranges[quarter_condition]
-        # clearance = np.mean(quarter_ranges) * np.cos(np.mean(quarter_angles))
-        # if clearance >= TURN_RADIUS / 2:
-        #     steer_control = self.SIDE * np.arctan(0.3 / self.DESIRED_DISTANCE)
-
 
         self.future_dist = scan.scan_time * self.VELOCITY
 
@@ -163,7 +152,7 @@ class WallFollower(Node):
         slope, intercept = np.linalg.lstsq(A, y)[0]
         
 
-        # # IF WALL ON OPPOSITE SIDE. JANKY CODE
+        # # IF WALL ON OPPOSITE SIDE. JANKY CODE to pass autograder
         # if np.sign(slope) == self.SIDE and abs(slope) >= 2 and - intercept / slope * self.SIDE > 0:
         #     slope = - 1.0 / slope
         #     intercept = - 1 / intercept
@@ -215,22 +204,25 @@ class WallFollower(Node):
         # TURNING
         angles = np.array([angle_min + angle_increment * i for i in range(num_points)])
         scan_ranges = np.array(scan.ranges)
-        side_block_ranges = scan_ranges[np.where(np.logical_and(self.SIDE * angles >= 0, self.SIDE * angles <= max_steer))]
-        all_block_ranges = scan_ranges[np.abs(angles) <= max_steer]
+
+        # defining turn fov as the section of the lidar from -max turning angle to +max turning angle
+        # the side (left or right) half of a turn fov
+        side_block_ranges = scan_ranges[np.where(np.logical_and(self.SIDE * angles >= 0, self.SIDE * angles <= MAX_STEER))]
+        # the entire turn fov
+        all_block_ranges = scan_ranges[np.abs(angles) <= MAX_STEER]
 
         # TURN TO AVOID HITTING SOMETHING
-        fov = max_steer
+        fov = MAX_STEER
         if np.quantile(all_block_ranges, 0.75) <= 4 * np.arctan(0.3/fov) or np.quantile(side_block_ranges, 0.75) <= 4 * np.arctan(0.3/fov):
-            steer_control = - self.SIDE * max_steer
+            steer_control = - self.SIDE * MAX_STEER
         if (all_block_ranges[0] + all_block_ranges[-1]) / 2 < 4 * np.arctan(0.3/fov):
-             steer_control = - self.SIDE * max_steer
-
+             steer_control = - self.SIDE * MAX_STEER
 
         # TURNING CORNERS
         # look 60 degs to side. see if have enough space
-        turn_fov_condition = np.where(np.logical_and(self.SIDE * angles >= np.pi / 3 - np.pi / 30, np.abs(angles) <= np.pi / 3 + np.pi / 30))
-        turn_fov_ranges = scan_ranges[turn_fov_condition]
-        turn_clearance = np.mean(turn_fov_ranges)
+        turn_lookahead_condition = np.where(np.logical_and(self.SIDE * angles >= np.pi / 3 - np.pi / 30, np.abs(angles) <= np.pi / 3 + np.pi / 30))
+        turn_lookahead_ranges = scan_ranges[turn_lookahead_condition]
+        turn_clearance = np.mean(turn_lookahead_ranges)
 
         # make sure there is space to turn into
         y = np.abs(np.sin(angles) * scan_ranges)
@@ -241,7 +233,7 @@ class WallFollower(Node):
         lateral_ranges = scan_ranges[lateral_condition]
         lateral_clearance = np.mean(lateral_ranges)
 
-        # combine all turn conditions
+        # combine all corner turn conditions
         if lateral_clearance >=  self.DESIRED_DISTANCE and \
             np.quantile(turn_space, 0.90) >= 4 * TURN_RADIUS \
             and turn_clearance >= TURN_RADIUS :
@@ -251,12 +243,12 @@ class WallFollower(Node):
 
 
         # if angle wrt wall is too large, use the control the angle instead
-        if abs(angle_error) >= max_steer:
+        if abs(angle_error) >= MAX_STEER:
             steer_control = angle_control
 
         # make sure the steering angle is within the allowable range
-        if steer_control < - max_steer: steer_control = - max_steer
-        if steer_control > max_steer: steer_control = max_steer
+        if steer_control < - MAX_STEER: steer_control = - MAX_STEER
+        if steer_control > MAX_STEER: steer_control = MAX_STEER
 
 
         # validate steering angle or else simulator will crash!
