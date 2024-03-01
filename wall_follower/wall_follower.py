@@ -74,6 +74,7 @@ class WallFollower(Node):
 
         MAX_STEER = 0.34 # radians
         TURN_RADIUS = np.arctan(0.3 / MAX_STEER)
+        TURN_RADIUS - 0.3 / np.sin(MAX_STEER)
 
         drive_msg = AckermannDriveStamped()
         drive_msg.drive.speed = self.VELOCITY
