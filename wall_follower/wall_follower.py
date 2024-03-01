@@ -229,13 +229,14 @@ class WallFollower(Node):
         turn_space = y[np.where(np.logical_and(self.SIDE * angles >= 0, np.abs(angles) <= np.pi / 2))]
 
         # check distance of wall directly to the side to control when to start the turn
-        lateral_condition = np.where(np.logical_and(self.SIDE * angles >= 0, np.abs(angles) <= np.pi / 30))
+        lateral_condition = np.where(np.logical_and(self.SIDE * angles >= np.pi / 2 - np.pi / 15, np.abs(angles) <= np.pi / 2))
         lateral_ranges = scan_ranges[lateral_condition]
         lateral_clearance = np.mean(lateral_ranges)
+        lateral_clearance = True
 
         # combine all corner turn conditions
-        if lateral_clearance >=  self.DESIRED_DISTANCE and \
-            np.quantile(turn_space, 0.90) >= 4 * TURN_RADIUS \
+            # if lateral_clearance >=  self.DESIRED_DISTANCE and \
+        if np.quantile(turn_space, 0.90) >= 4 * TURN_RADIUS \
             and turn_clearance >= TURN_RADIUS :
             steer_control = self.SIDE * np.arctan(0.3 / self.DESIRED_DISTANCE) / 2
 
