@@ -181,7 +181,7 @@ class WallTest(Node):
             stop = AckermannDriveStamped()
             stop.drive.speed = 0.
             stop.drive.steering_angle = 0.
-            self.drive_pub.publish(stop)
+            self.drive_pub. publish(stop)
             self.saves[self.TEST_NAME] = encode(np.array(self.positions))
             np.savez_compressed(self.TEST_NAME+"_log", **self.saves)
             raise SystemExit

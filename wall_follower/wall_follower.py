@@ -70,11 +70,12 @@ class WallFollower(Node):
     def lidar_callback(self, scan):
         self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
         self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
+        self.VELOCITY = 4.0
         self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
 
         MAX_STEER = 0.34 # radians
         TURN_RADIUS = np.arctan(0.3 / MAX_STEER)
-        TURN_RADIUS - 0.3 / np.sin(MAX_STEER)
+        # TURN_RADIUS - 0.3 / np.sin(MAX_STEER)
 
         drive_msg = AckermannDriveStamped()
         drive_msg.drive.speed = self.VELOCITY
