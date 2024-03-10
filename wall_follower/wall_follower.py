@@ -16,19 +16,16 @@ class WallFollower(Node):
         # Declare parameters to make them available for use
         self.declare_parameter("scan_topic", "/scan")
         self.declare_parameter("drive_topic", "/vesc/input/navigation")
-        self.declare_parameter("side", "default")
-        self.declare_parameter("velocity", "0.01")
+        self.declare_parameter("side", "-1")
+        self.declare_parameter("velocity", "1.0")
         self.declare_parameter("desired_distance", "default")
 
         # Fetch constants from the ROS parameter server
         self.SCAN_TOPIC = self.get_parameter('scan_topic').get_parameter_value().string_value
         self.DRIVE_TOPIC = self.get_parameter('drive_topic').get_parameter_value().string_value
         self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
-        # self.SIDE = 1
         self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
-        self.VELOCITY = 1.0
         self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
-        self.DESIRED_DISTANCE = 1.0
         
         self.WALL_TOPIC = "/wall"
         self.DISTANCE_TOPIC = "/dist"
@@ -75,10 +72,9 @@ class WallFollower(Node):
         # self.drive_forward()
         # return
 
-
         self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
-        # self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
-        # self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
+        self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
+        self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
 
         MAX_STEER = 0.34 # radians
         
@@ -102,8 +98,6 @@ class WallFollower(Node):
         num_points = len(ranges)
 
         angles = np.array([angle_min + angle_increment * i for i in range(num_points)])
-
-        forward_dist = ranges[num_points // 2]
 
         angle_thres = np.pi / 12
 
@@ -135,11 +129,6 @@ class WallFollower(Node):
 
 
         # use closer points
-        # "Objects are closer than they appear"
-        # x_p = x - 2 * TURN_RADIUS
-        # x_p[x_p < 0] = 0.0
-        #x_p = np.abs(x_p)
-        # x_p = x
         distances = x**2 + y**2
         dist_thres = np.quantile(distances, 0.5)
 
@@ -177,12 +166,6 @@ class WallFollower(Node):
         ranges_est = m * angles + b
         
         VisualizationTools.plot_line(x, y_est, self.line_pub, frame="laser")
-
-        dist = 4 * TURN_RADIUS
-        VisualizationTools.plot_line(np.array([dist, dist]), np.array([-0.5, 0.5]), self.dist_line_pub)
-
-        angle = 0.34
-        VisualizationTools.plot_line(np.array([-dist, 0.0, dist]), np.array([-dist*np.arctan(0.34), 0.0, dist*np.arctan(0.34)]), self.angle_pub)
 
         # ----------------------------------------------------
         # DRIVING
@@ -245,12 +228,6 @@ class WallFollower(Node):
         y = np.abs(np.sin(angles) * scan_ranges)
         turn_space = y[np.where(np.logical_and(self.SIDE * angles >= 0, np.abs(angles) <= np.pi / 2))]
 
-        # check distance of wall directly to the side to control when to start the turn
-        # lateral_condition = np.where(np.logical_and(self.SIDE * angles >= np.pi / 2 - np.pi / 15, np.abs(angles) <= np.pi / 2))
-        # lateral_ranges = scan_ranges[lateral_condition]
-        # lateral_clearance = np.mean(lateral_ranges)
-        # lateral_clearance = True
-
         # combine all corner turn conditions
             # if lateral_clearance >=  self.DESIRED_DISTANCE and \
         required_turn_clearance = 4 * TURN_RADIUS
@@ -259,8 +236,6 @@ class WallFollower(Node):
             and turn_clearance >= TURN_RADIUS :
             # steer_control = self.SIDE / np.arctan(0.3 / self.DESIRED_DISTANCE)
             steer_control = self.SIDE * np.arcsin(0.3 / self.DESIRED_DISTANCE)
-
-
 
 
         # if angle wrt wall is too large, use the control the angle instead
