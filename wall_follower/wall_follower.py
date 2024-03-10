@@ -14,23 +14,22 @@ class WallFollower(Node):
     def __init__(self):
         super().__init__("wall_follower")
         # Declare parameters to make them available for use
-        self.declare_parameter("scan_topic", "default")
-        self.declare_parameter("drive_topic", "default")
-        self.declare_parameter("side", "default")
-        self.declare_parameter("velocity", "default")
+        self.declare_parameter("scan_topic", "/scan")
+        self.declare_parameter("drive_topic", "/vesc/input/navigation")
+        self.declare_parameter("side", "-1")
+        self.declare_parameter("velocity", "1.0")
         self.declare_parameter("desired_distance", "default")
 
         # Fetch constants from the ROS parameter server
         self.SCAN_TOPIC = self.get_parameter('scan_topic').get_parameter_value().string_value
         self.DRIVE_TOPIC = self.get_parameter('drive_topic').get_parameter_value().string_value
         self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
-        # self.SIDE = 1
         self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
-        # self.VELOCITY = 4.0
         self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
         
         self.WALL_TOPIC = "/wall"
-        self.WALL_OTHER_TOPIC = "/wall_other"
+        self.DISTANCE_TOPIC = "/dist"
+        self.ANGLE_TOPIC = "/angle"
 
         self.dist_error_integral = 0
         self.angle_error_integral = 0
@@ -49,12 +48,38 @@ class WallFollower(Node):
             10)
         
         self.line_pub = self.create_publisher(Marker, self.WALL_TOPIC, 1)
-        self.line_pub_other = self.create_publisher(Marker, self.WALL_OTHER_TOPIC, 1)
+        self.dist_line_pub = self.create_publisher(Marker, self.DISTANCE_TOPIC, 1)
+        self.angle_pub = self.create_publisher(Marker, self.ANGLE_TOPIC, 1)
 
         self.drive_forward()
 
     # Write your callback functions here 
     def drive_forward(self):
+
+        # self.get_logger().info('Drive Forward')
+        drive_msg = AckermannDriveStamped()
+        drive_msg.drive.speed = self.VELOCITY
+        
+        drive_msg.drive.acceleration = 0.0
+        drive_msg.drive.jerk = 0.0
+
+        drive_msg.drive.steering_angle = -0.05
+        drive_msg.drive.steering_angle_velocity = 0.0
+        self.publisher_.publish(drive_msg)
+
+    def lidar_callback(self, scan):
+        # for testing safety controller
+        # self.drive_forward()
+        # return
+
+        self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
+        self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
+        self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
+
+        MAX_STEER = 0.34 # radians
+        
+        TURN_RADIUS = 0.3 / np.sin(MAX_STEER)
+
         drive_msg = AckermannDriveStamped()
         drive_msg.drive.speed = self.VELOCITY
         drive_msg.drive.acceleration = 0.0
@@ -62,12 +87,6 @@ class WallFollower(Node):
 
         drive_msg.drive.steering_angle = 0.0
         drive_msg.drive.steering_angle_velocity = 0.0
-        self.publisher_.publish(drive_msg)
-
-    def lidar_callback(self, scan):
-        self.SIDE = self.get_parameter('side').get_parameter_value().integer_value
-        self.VELOCITY = self.get_parameter('velocity').get_parameter_value().double_value
-        self.DESIRED_DISTANCE = self.get_parameter('desired_distance').get_parameter_value().double_value
 
         lookahead_dist = 7 # meters
         ranges = np.array(scan.ranges)
@@ -80,21 +99,19 @@ class WallFollower(Node):
 
         angles = np.array([angle_min + angle_increment * i for i in range(num_points)])
 
-        forward_dist = ranges[num_points // 2]
+        angle_thres = np.pi / 12
 
         if self.SIDE == 1: # Left Wall, Positive Angles
-            angles_other = angles[:num_points // 2]
-            ranges_other = ranges[:num_points // 2]
-            angles = angles[num_points // 2:]
-            ranges = ranges[num_points // 2:]
+            ranges = ranges[angles >= angle_thres]
+            angles = angles[angles >= angle_thres]
         if self.SIDE == -1: # Right Wall, Negative Angles
-            angles_other = angles[num_points // 2:]
-            ranges_other = ranges[num_points // 2:]
-            angles = angles[:num_points // 2]
-            ranges = ranges[:num_points // 2]
+            ranges = ranges[angles <= - angle_thres]
+            angles = angles[angles <= - angle_thres]
 
         # filter out less important data
         forwards_condition = np.logical_not(np.logical_and(ranges > lookahead_dist / 4, np.abs(angles) >= np.pi / 2))
+        forwards_condition = np.abs(angles) <= np.pi / 2
+        forwards_condition = True
         condition = np.logical_and(ranges <= lookahead_dist, forwards_condition)
         in_range_indices = np.where(condition)
         angles = angles[in_range_indices]
@@ -107,10 +124,13 @@ class WallFollower(Node):
         x = ranges * np.cos(angles)
         y = ranges * np.sin(angles)
 
+        y = y[x <= 2 * self.DESIRED_DISTANCE]
+        x = x[x <= 2 * self.DESIRED_DISTANCE]
+
 
         # use closer points
-        distances = x + y**2
-        dist_thres = np.quantile(distances, 0.75)
+        distances = x**2 + y**2
+        dist_thres = np.quantile(distances, 0.5)
 
         closer_indices = np.where(distances <= dist_thres)
 
@@ -131,10 +151,10 @@ class WallFollower(Node):
         slope, intercept = np.linalg.lstsq(A, y)[0]
         
 
-        # IF WALL ON OPPOSITE SIDE. JANKY CODE
-        if np.sign(slope) == self.SIDE and abs(slope) >= 2 and - intercept / slope * self.SIDE > 0:
-            slope = - 1.0 / slope
-            intercept = - intercept
+        # # IF WALL ON OPPOSITE SIDE. JANKY CODE to pass autograder
+        # if np.sign(slope) == self.SIDE and abs(slope) >= 2 and - intercept / slope * self.SIDE > 0:
+        #     slope = - 1.0 / slope
+        #     intercept = - 1 / intercept
 
         y_est = slope * x + intercept
 
@@ -145,37 +165,29 @@ class WallFollower(Node):
 
         ranges_est = m * angles + b
         
-        VisualizationTools.plot_line(x, y_est, self.line_pub)
+        VisualizationTools.plot_line(x, y_est, self.line_pub, frame="laser")
 
-        self.drive(x, y_est, slope, intercept)
-
-
-    def drive(self, x, y, slope, intercept):
-        max_steer = 0.34 # radians
-
-        drive_msg = AckermannDriveStamped()
-        drive_msg.drive.speed = self.VELOCITY
-        drive_msg.drive.acceleration = 0.0
-        drive_msg.drive.jerk = 0.0
-
-        drive_msg.drive.steering_angle = 0.0
-        drive_msg.drive.steering_angle_velocity = 0.0
+        # ----------------------------------------------------
+        # DRIVING
+        # ----------------------------------------------------
+        y = y_est
 
         # want to minimize cartesian slope to straighten car
         angle_error = np.arctan(slope) 
         angle_error_deriv = angle_error - self.angle_error_prev
 
+        forward_indices = np.where(np.logical_and(x >= self.future_dist, x <= self.VELOCITY / 2))
         forward_indices = np.where(x >= self.future_dist)
 
         # want to minimize abs(y) to get close to wall
-        dist_actual = np.mean(np.abs(y[forward_indices])) if forward_indices else 0
+        dist_actual = np.mean(np.abs(y[forward_indices])) if forward_indices else self.DESIRED_DISTANCE
         dist_desired = self.DESIRED_DISTANCE
         dist_error = (dist_desired - dist_actual) * - self.SIDE
         dist_error_deriv = dist_error - self.dist_error_prev
 
-        dist_control = dist_error + dist_error_deriv / 4 
+        dist_control = dist_error + dist_error_deriv / 3
 
-        angle_control = angle_error
+        angle_control = angle_error # self.VELOCITY # + angle_error_deriv / 4
 
         steer_control = dist_control # + angle_control / 10
 
@@ -183,23 +195,63 @@ class WallFollower(Node):
 
 
         # TURNING
-        # if a large space is empty where the estimated wall is
-        within_range = np.logical_and(x >= self.future_dist, x <=  2 * self.future_dist + self.DESIRED_DISTANCE )
-        if not np.any(within_range):
-            steer_control = self.SIDE * np.arctan(0.3 / self.DESIRED_DISTANCE)
+        angles = np.array([angle_min + angle_increment * i for i in range(num_points)])
+        scan_ranges = np.array(scan.ranges)
+
+        # defining turn fov as the section of the lidar from -max turning angle to +max turning angle
+        # the side (left or right) half of a turn fov
+        side_block_ranges = scan_ranges[np.where(np.logical_and(self.SIDE * angles >= 0, self.SIDE * angles <= MAX_STEER))]
+        # the entire turn fov
+        all_block_ranges = scan_ranges[np.abs(angles) <= MAX_STEER]
+
+        # TURN TO AVOID HITTING SOMETHING
+        avoid_distance = 1.25 * max(self.DESIRED_DISTANCE, TURN_RADIUS)
+        avoid_distance = 1.12 * (self.DESIRED_DISTANCE + TURN_RADIUS)
+        if np.quantile(all_block_ranges, 0.75) <= avoid_distance or np.quantile(side_block_ranges, 0.75) <= avoid_distance:
+            steer_control = - self.SIDE * MAX_STEER
+        if (all_block_ranges[0] + all_block_ranges[-1]) / 2 < 0.5:
+             steer_control = - self.SIDE * MAX_STEER
+
+        # TURNING CORNERS
+        # look 45-60 degs to side. see if have enough space
+        view_angle = np.pi/4
+        turn_lookahead_condition = np.where(
+                np.logical_and(
+                    self.SIDE * angles >= np.pi / 4 - np.pi / 30, 
+                    np.abs(angles) <= np.pi / 3 + np.pi / 30
+                    )
+                )
+        turn_lookahead_ranges = scan_ranges[turn_lookahead_condition]
+        turn_clearance = np.mean(turn_lookahead_ranges)
+
+        # make sure there is space to turn into
+        y = np.abs(np.sin(angles) * scan_ranges)
+        turn_space = y[np.where(np.logical_and(self.SIDE * angles >= 0, np.abs(angles) <= np.pi / 2))]
+
+        # combine all corner turn conditions
+            # if lateral_clearance >=  self.DESIRED_DISTANCE and \
+        required_turn_clearance = 4 * TURN_RADIUS
+        required_turn_clearance = 2.5 * self.DESIRED_DISTANCE
+        if np.quantile(turn_space, 0.90) >= required_turn_clearance \
+            and turn_clearance >= TURN_RADIUS :
+            # steer_control = self.SIDE / np.arctan(0.3 / self.DESIRED_DISTANCE)
+            steer_control = self.SIDE * np.arcsin(0.3 / self.DESIRED_DISTANCE)
+
 
         # if angle wrt wall is too large, use the control the angle instead
-        if abs(angle_error) >= max_steer:
+        if abs(angle_error) >= MAX_STEER:
             steer_control = angle_control
 
         # make sure the steering angle is within the allowable range
-        if steer_control < - max_steer: steer_control = - max_steer
-        if steer_control > max_steer: steer_control = max_steer
+        if steer_control < - MAX_STEER: steer_control = - MAX_STEER
+        if steer_control > MAX_STEER: steer_control = MAX_STEER
 
 
         # validate steering angle or else simulator will crash!
         if np.isnan(steer_control): steer_control = 0.0
-        drive_msg.drive.steering_angle = steer_control
+
+        # - 0.05 to adjust for fact that car naturally turns left
+        drive_msg.drive.steering_angle = steer_control - 0.05
 
         self.publisher_.publish(drive_msg)
 
